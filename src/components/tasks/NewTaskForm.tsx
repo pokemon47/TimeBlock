@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/browser";
 
-export default function NewTaskForm() {
+export default function NewTaskForm({ onSuccess }: { onSuccess?: () => void } = {}) {
   const [title, setTitle] = useState("");
   const [hours, setHours] = useState(0);
   const [minutes, setMinutes] = useState(30);
@@ -52,6 +52,7 @@ export default function NewTaskForm() {
       setHours(0);
       setMinutes(30);
       router.refresh(); // revalidates server components
+      onSuccess?.();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create task";
       setError(message);

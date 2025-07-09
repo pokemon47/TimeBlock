@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import Header from "@/components/header";
+import AppShell from "@/components/layout/AppShell";
 import { TimerProvider } from "@/contexts/TimerContext";
 
 interface Props {
@@ -19,11 +19,8 @@ export default async function ProtectedLayout({ children }: Props) {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <Header user={user} />
-      <TimerProvider>
-        <main className="flex-1 p-4">{children}</main>
-      </TimerProvider>
-    </div>
+    <TimerProvider>
+      <AppShell user={user}>{children}</AppShell>
+    </TimerProvider>
   );
 } 

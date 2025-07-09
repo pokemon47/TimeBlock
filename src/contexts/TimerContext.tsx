@@ -17,6 +17,8 @@ type TimerState = {
   workMsSinceBreak: number;
   isOnBreak: boolean;
   breakStartedAt: number | null;
+  activeEstimateSecs: number | null;
+  activePastSeconds: number;
 };
 
 interface TimerContextValue extends TimerState {
@@ -51,6 +53,8 @@ function loadState(): TimerState {
     workMsSinceBreak: 0,
     isOnBreak: false,
     breakStartedAt: null,
+    activeEstimateSecs: null,
+    activePastSeconds: 0,
   };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -67,6 +71,8 @@ function loadState(): TimerState {
       workMsSinceBreak: parsed.workMsSinceBreak ?? 0,
       isOnBreak: parsed.isOnBreak ?? false,
       breakStartedAt: parsed.breakStartedAt ?? null,
+      activeEstimateSecs: parsed.activeEstimateSecs ?? null,
+      activePastSeconds: parsed.activePastSeconds ?? 0,
     } as TimerState;
   } catch {
     return {
@@ -80,6 +86,8 @@ function loadState(): TimerState {
       workMsSinceBreak: 0,
       isOnBreak: false,
       breakStartedAt: null,
+      activeEstimateSecs: null,
+      activePastSeconds: 0,
     };
   }
 }
@@ -227,6 +235,25 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
       } catch {}
     }
 
+    const supa = createClient();
+    const { data: taskRow } = await supa
+      .from("tasks")
+      .select("duration_estimated")
+      .eq("id", taskId)
+      .single();
+    const estimateSecs = taskRow?.duration_estimated ?? 0;
+
+    // sum past seconds for that task
+    const { data: pastRows } = await supa
+      .from("time_logs")
+      .select("duration_actual, overtime_duration")
+      .eq("task_id", taskId)
+      .not("ended_at", "is", null);
+    const pastSeconds = (pastRows ?? []).reduce(
+      (sum, r) => sum + (r.duration_actual ?? 0) + (r.overtime_duration ?? 0),
+      0
+    );
+
     // start new log
     let newLogId: string | null = null;
     try {
@@ -244,6 +271,8 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
       workMsSinceBreak: state.workMsSinceBreak, // carry over
       isOnBreak: false,
       breakStartedAt: null,
+      activeEstimateSecs: estimateSecs,
+      activePastSeconds: pastSeconds,
     });
 
     // clear any pending prompt timer
@@ -313,6 +342,8 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
       workMsSinceBreak: 0,
       isOnBreak: false,
       breakStartedAt: null,
+      activeEstimateSecs: null,
+      activePastSeconds: 0,
     });
 
     setShowPrompt(false);
