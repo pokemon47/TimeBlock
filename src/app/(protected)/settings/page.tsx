@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import BreakSettingsForm from "@/components/settings/BreakSettingsForm";
+import AppearanceForm from "@/components/settings/AppearanceForm";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,8 @@ export default async function SettingsPage() {
         }}
         userId={user.id}
       />
+
+      <AppearanceForm userId={user.id} />
     </main>
   );
 } 

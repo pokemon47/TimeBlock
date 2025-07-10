@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import { startLog } from "@/db/startLog";
 import { stopLog } from "@/db/stopLog";
+import { createBreakLog } from "@/db/createBreakLog";
 import { Button } from "@/components/ui/button";
 
 type TimerState = {
@@ -29,6 +30,10 @@ interface TimerContextValue extends TimerState {
    */
   stop: (overtimeMinutes?: number) => Promise<void>;
   updateBreakSettings: (vals: { break_every_mins?: number; break_duration_mins?: number; long_pause_mins?: number }) => void;
+  breakDurationMs: number;
+  startBreak: (durationMs: number) => void;
+  resumeFromBreak: () => void;
+  extendBreak: (additionalMs?: number) => void;
   // internal: but exposed to UI prompt
 }
 
@@ -91,6 +96,7 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
   const [longPauseMs, setLongPauseMs] = useState<number>(DEFAULT_LONG_PAUSE_MS);
   const [breakEveryMs, setBreakEveryMs] = useState<number>(50 * 60 * 1000); // default 50 min
   const [breakDurationMs, setBreakDurationMs] = useState<number>(10 * 60 * 1000);
+  const defaultBreakMsRef = useRef<number>(10 * 60 * 1000);
   const [showBreakPrompt, setShowBreakPrompt] = useState(false);
   const [showBreakEndPrompt, setShowBreakEndPrompt] = useState(false);
   const breakTimerRef = useRef<number | null>(null);
@@ -123,6 +129,7 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
           }
           if (typeof data.break_duration_mins === "number" && data.break_duration_mins > 0) {
             setBreakDurationMs(data.break_duration_mins * 60 * 1000);
+            defaultBreakMsRef.current = data.break_duration_mins * 60 * 1000;
           }
         }
       }
@@ -286,6 +293,20 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function stop(overtimeSeconds: number = 0) {
+    // If stopping while on a break, finalise that break log first
+    if (state.isOnBreak && userId && state.breakStartedAt) {
+      const now = Date.now();
+      const duration = now - state.breakStartedAt;
+      try {
+        await createBreakLog(
+          userId,
+          new Date(state.breakStartedAt).toISOString(),
+          new Date(now).toISOString(),
+          duration
+        );
+      } catch {}
+    }
+
     if (state.currentLogId) {
       const now = Date.now();
       const additionalPaused = state.isPaused && state.pauseStartedAt ? now - state.pauseStartedAt : 0;
@@ -341,12 +362,26 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
 
   // Break prompt handlers
   function handleStartBreak() {
-    // simply pause for now and reset counter
-    pause();
-    setState((prev) => ({ ...prev, workMsSinceBreak: 0 }));
+    // Delegate to unified startBreak helper
+    startBreak(breakDurationMs);
     setShowBreakPrompt(false);
-    // start break
-    setState((prev) => ({ ...prev, isOnBreak: true, breakStartedAt: Date.now(), workMsSinceBreak: 0 }));
+  }
+
+  /* -------- Public startBreak -------- */
+  function startBreak(durationMs: number) {
+    // pause current task if running
+    if (!state.isPaused) {
+      pause();
+    }
+
+    // reset work counter
+    setState((prev) => ({ ...prev, workMsSinceBreak: 0 }));
+
+    // set custom duration for this break
+    setBreakDurationMs(durationMs);
+
+    // begin break
+    setState((prev) => ({ ...prev, isOnBreak: true, breakStartedAt: Date.now() }));
   }
 
   function handleSkipBreak() {
@@ -356,15 +391,52 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
   }
 
   function handleResumeFromBreak() {
-    // End break and resume work
-    setState((prev) => ({ ...prev, isOnBreak: false, breakStartedAt: null }));
+    // Record break log before switching back to work
+    if (userId && state.breakStartedAt) {
+      const now = Date.now();
+      const duration = now - state.breakStartedAt;
+      createBreakLog(
+        userId,
+        new Date(state.breakStartedAt).toISOString(),
+        new Date(now).toISOString(),
+        duration
+      ).catch(() => {});
+    }
+
+    // End break and resume work immediately
+    setState((prev) => ({
+      ...prev,
+      isOnBreak: false,
+      breakStartedAt: null,
+      isPaused: false,
+      startedAt: Date.now(),
+      pauseStartedAt: null,
+    }));
     setShowBreakEndPrompt(false);
+
+    // Restore default break length
+    setBreakDurationMs(defaultBreakMsRef.current);
   }
 
   function handleExtendBreak() {
-    // reset break start to now to extend another duration
-    setState((prev) => ({ ...prev, breakStartedAt: Date.now() }));
-    setShowBreakEndPrompt(false);
+    // reset break start to now to extend another duration (same length)
+    extendBreak();
+  }
+
+  /**
+   * Public extender – if additionalMs provided, add that many milliseconds to the
+   * current break duration. If omitted, fallback to legacy behaviour of restarting
+   * the break with the same duration.
+   */
+  function extendBreak(additionalMs?: number) {
+    if (additionalMs && additionalMs > 0) {
+      setBreakDurationMs((prev) => prev + additionalMs);
+      setShowBreakEndPrompt(false);
+    } else {
+      // Fallback: restart timer with same duration
+      setState((prev) => ({ ...prev, breakStartedAt: Date.now() }));
+      setShowBreakEndPrompt(false);
+    }
   }
 
   /** Update break-related settings live */
@@ -374,6 +446,7 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
     }
     if (typeof vals.break_duration_mins === "number" && vals.break_duration_mins >= 0) {
       setBreakDurationMs(vals.break_duration_mins * 60 * 1000);
+      defaultBreakMsRef.current = vals.break_duration_mins * 60 * 1000;
     }
     if (typeof vals.long_pause_mins === "number" && vals.long_pause_mins >= 0) {
       setLongPauseMs(vals.long_pause_mins === 0 ? 0 : vals.long_pause_mins * 60 * 1000);
@@ -382,7 +455,17 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
 
   // -------- Long-pause timer effect --------
   useEffect(() => {
-    // If we’re paused, start / reset the countdown
+    // Ignore entirely while the user is on a break
+    if (state.isOnBreak) {
+      // Clear any existing long-pause timer so it doesn't fire mid-break
+      if (longPauseTimerRef.current) {
+        clearTimeout(longPauseTimerRef.current);
+        longPauseTimerRef.current = null;
+      }
+      return;
+    }
+
+    // If we’re paused (but NOT on break), start / reset the countdown
     if (state.isPaused && state.pauseStartedAt) {
       const now = Date.now();
       const elapsedSincePause = now - state.pauseStartedAt;
@@ -415,11 +498,11 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(longPauseTimerRef.current);
       longPauseTimerRef.current = null;
     }
-  }, [state.isPaused, state.pauseStartedAt]);
+  }, [state.isPaused, state.pauseStartedAt, state.isOnBreak]);
 
 
   return (
-    <TimerContext.Provider value={{ ...state, start, pause, resume, stop, updateBreakSettings }}>
+    <TimerContext.Provider value={{ ...state, start, pause, resume, stop, updateBreakSettings, breakDurationMs, startBreak, resumeFromBreak: handleResumeFromBreak, extendBreak }}>
       {children}
 
       {showPrompt && (

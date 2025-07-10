@@ -121,17 +121,28 @@ export default function TaskItem({ task }: Props) {
     setOvertimeAck(true);
   }
 
-  async function handleDelete() {
-    if (!confirm("Delete this task?")) return;
+  const [showDelete, setShowDelete] = useState(false);
+
+  useEffect(() => {
+    if (!showDelete) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setShowDelete(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showDelete]);
+
+  async function confirmDelete() {
     setLoading(true);
     setError(null);
     const { error } = await supabase.from("tasks").delete().eq("id", task.id);
     setLoading(false);
+    setShowDelete(false);
     if (error) {
       setError(error.message);
       return;
     }
-    router.refresh();
+    // router.refresh(); sidebar realtime listener will remove item
   }
 
   function fmt(minutes: number | null) {
@@ -156,7 +167,7 @@ export default function TaskItem({ task }: Props) {
             </span>
           )}
         </p>
-        {error && <p className="text-xs text-red-600">{error}</p>}
+        {error && <p className="text-xs text-red-600 mt-1">{error}</p>}
       </div>
       {showOverPrompt && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -185,7 +196,7 @@ export default function TaskItem({ task }: Props) {
       <Button
         variant="destructive"
         size="sm"
-        onClick={handleDelete}
+        onClick={() => setShowDelete(true)}
         disabled={loading || (timer.activeTaskId === task.id && !timer.isPaused)}
         title={
           timer.activeTaskId === task.id && !timer.isPaused
@@ -195,6 +206,25 @@ export default function TaskItem({ task }: Props) {
       >
         {loading ? "…" : "Delete"}
       </Button>
+
+      {showDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowDelete(false)}>
+          <div
+            className="bg-background rounded p-6 w-full max-w-sm space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm">Are you sure you want to delete the task “{task.title}”?</p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setShowDelete(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" size="sm" onClick={confirmDelete} disabled={loading}>
+                {loading ? "Deleting…" : "Yes, delete"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </li>
   );
 } 
