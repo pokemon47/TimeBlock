@@ -21,16 +21,16 @@ export default async function ProtectedLayout({ children }: Props) {
 
   return (
     <Providers>
-      <div className="min-h-screen flex flex-col">
-        <Header user={user} />
-        <div className="flex flex-1">
+      <div className="h-screen flex flex-col overflow-hidden">
+      <Header user={user} />
+        <div className="flex flex-1 overflow-hidden">
           {/* Sidebar */}
           <TaskSidebar userId={user.id} />
 
           {/* Main content */}
-          <main className="flex-1 p-4">{children}</main>
+          <main className="flex-1 p-4 overflow-y-auto">{children}</main>
         </div>
-      </div>
+    </div>
     </Providers>
   );
 } 
