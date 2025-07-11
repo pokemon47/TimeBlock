@@ -371,7 +371,7 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
   function startBreak(durationMs: number) {
     // pause current task if running
     if (!state.isPaused) {
-      pause();
+    pause();
     }
 
     // reset work counter
@@ -434,8 +434,8 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
       setShowBreakEndPrompt(false);
     } else {
       // Fallback: restart timer with same duration
-      setState((prev) => ({ ...prev, breakStartedAt: Date.now() }));
-      setShowBreakEndPrompt(false);
+    setState((prev) => ({ ...prev, breakStartedAt: Date.now() }));
+    setShowBreakEndPrompt(false);
     }
   }
 
