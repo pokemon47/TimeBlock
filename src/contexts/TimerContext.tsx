@@ -6,6 +6,7 @@ import { startLog } from "@/db/startLog";
 import { stopLog } from "@/db/stopLog";
 import { createBreakLog } from "@/db/createBreakLog";
 import { Button } from "@/components/ui/button";
+import { playAlert, startRepeatAlert, stopRepeatAlert } from "@/lib/playAlert";
 
 type TimerState = {
   activeTaskId: string | null;
@@ -104,6 +105,7 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
 
   // fetch user id once
   const [userId, setUserId] = useState<string | null>(null);
+  const channelRef = useRef<any>(null);
   useEffect(() => {
     (async () => {
       const supabase = createClient();
@@ -136,6 +138,112 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
+  /* ------------------- Restore any active log on cold start ------------------- */
+  useEffect(() => {
+    if (!userId) return;
+    if (state.activeTaskId) return; // already have local session
+
+    let cancelled = false;
+
+    (async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("time_logs")
+        .select("id, task_id, started_at, paused_ms")
+        .eq("user_id", userId)
+        .is("ended_at", null)
+        .order("started_at", { ascending: false })
+        .maybeSingle();
+
+      if (cancelled || error || !data) return;
+
+      const startedAtTs = data.started_at ? new Date(data.started_at).getTime() : Date.now();
+
+      setState((prev) => ({
+        ...prev,
+        activeTaskId: data.task_id ?? null,
+        currentLogId: data.id,
+        startedAt: startedAtTs,
+        elapsedMs: 0,
+        isPaused: false,
+        pauseStartedAt: null,
+        pausedMs: data.paused_ms ?? 0,
+      }));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  /* ------------------- Realtime sync across tabs/devices ------------------- */
+  useEffect(() => {
+    if (!userId) return;
+
+    const supabase = createClient();
+
+    const channel = supabase
+      .channel(`timelogs-${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "time_logs",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          const row: any = payload.new ?? payload.old;
+
+          // INSERT of a new running log
+          if (payload.eventType === "INSERT" && row.ended_at === null) {
+            setState((prev) => ({
+              ...prev,
+              activeTaskId: row.task_id ?? null,
+              currentLogId: row.id,
+              startedAt: row.started_at ? new Date(row.started_at).getTime() : Date.now(),
+              elapsedMs: 0,
+              isPaused: false,
+              pauseStartedAt: null,
+              pausedMs: row.paused_ms ?? 0,
+              isOnBreak: false,
+              breakStartedAt: null,
+            }));
+            return;
+          }
+
+          // UPDATE closing the current log
+          if (
+            payload.eventType === "UPDATE" &&
+            row.id === state.currentLogId &&
+            row.ended_at !== null
+          ) {
+            setState((prev) => ({
+              ...prev,
+              activeTaskId: null,
+              currentLogId: null,
+              startedAt: null,
+              elapsedMs: 0,
+              isPaused: true,
+              pauseStartedAt: null,
+              pausedMs: 0,
+            }));
+          }
+        }
+      )
+      .subscribe();
+
+    channelRef.current = channel;
+
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
+  }, [userId, state.currentLogId]);
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -155,11 +263,13 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
 
       if (remaining <= 0) {
         setShowBreakPrompt(true);
+        playAlert();
         return; // we won't schedule further until break taken or skipped
       }
 
       breakTimerRef.current = window.setTimeout(() => {
         setShowBreakPrompt(true);
+        playAlert();
       }, remaining);
 
       return () => {
@@ -193,11 +303,13 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
 
     if (remaining <= 0) {
       setShowBreakEndPrompt(true);
+      playAlert();
       return;
     }
 
     breakEndTimerRef.current = window.setTimeout(() => {
       setShowBreakEndPrompt(true);
+      playAlert();
     }, remaining);
 
     return () => {
@@ -354,6 +466,7 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
     // reset pause timer from now
     longPauseTimerRef.current = window.setTimeout(() => {
       setShowPrompt(true);
+      playAlert();
     }, longPauseMs);
 
     // reset pauseStartedAt
@@ -478,11 +591,13 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
       if (remaining <= 0) {
         // Already exceeded threshold – show immediately
         setShowPrompt(true);
+        playAlert();
         return;
       }
 
       longPauseTimerRef.current = window.setTimeout(() => {
         setShowPrompt(true);
+        playAlert();
       }, remaining);
 
       return () => {
@@ -499,6 +614,18 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
       longPauseTimerRef.current = null;
     }
   }, [state.isPaused, state.pauseStartedAt, state.isOnBreak]);
+
+  /* -------- Repeat alert driver for prompts ------- */
+  useEffect(() => {
+    const repeat = typeof window !== "undefined" && localStorage.getItem("tb_repeat") === "1";
+    const secs = typeof window !== "undefined" ? parseInt(localStorage.getItem("tb_repeat_secs") || "5") : 5;
+
+    if (showPrompt || showBreakPrompt || showBreakEndPrompt) {
+      if (repeat) startRepeatAlert(secs);
+    } else {
+      stopRepeatAlert();
+    }
+  }, [showPrompt, showBreakPrompt, showBreakEndPrompt]);
 
 
   return (

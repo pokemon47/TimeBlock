@@ -43,7 +43,7 @@ export default function AppearanceForm({ userId }: { userId: string }) {
 
   return (
     <section className="mt-10 space-y-4">
-      <h2 className="text-lg font-semibold">Appearance</h2>
+      {/* <h2 className="text-lg font-semibold">Appearance</h2> */}
       <RadioGroup value={choice} onValueChange={(v) => setChoice(v as ThemeChoice)} className="flex gap-6">
         <div className="flex items-center gap-2">
           <RadioGroupItem value="light" id="light" />
