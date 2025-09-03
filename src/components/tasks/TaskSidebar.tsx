@@ -88,6 +88,7 @@ export default function TaskSidebar({ userId }: Props) {
       .eq("user_id", userId)
       .gte("created_at", start.toISOString())
       .lt("created_at", end.toISOString())
+      .eq("is_finished", false)
       .order("created_at", { ascending: true });
 
     if (!error) {
@@ -107,10 +108,13 @@ export default function TaskSidebar({ userId }: Props) {
         (payload) => {
           setTasks((prev) => {
             const evt = payload.eventType;
-            if (evt === "INSERT") {
+            if (evt === "INSERT" && payload.new.is_finished === false) {
               return [...prev, payload.new];
             }
             if (evt === "UPDATE") {
+              if (payload.new.is_finished) {
+                return prev.filter((t) => t.id !== payload.new.id);
+              }
               return prev.map((t) => (t.id === payload.new.id ? payload.new : t));
             }
             if (evt === "DELETE") {
@@ -128,7 +132,14 @@ export default function TaskSidebar({ userId }: Props) {
 
     channelRef.current = channel;
 
+    function onEnded(e: any) {
+      const id = e.detail?.taskId;
+      if (id) setTasks((prev) => prev.filter((t) => t.id !== id));
+    }
+    window.addEventListener("tb_task_ended", onEnded);
+
     return () => {
+      window.removeEventListener("tb_task_ended", onEnded);
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
@@ -147,7 +158,7 @@ export default function TaskSidebar({ userId }: Props) {
 
     // Priority filter
     if (priorityFilter !== "all") {
-      list = list.filter((t) => t.priority === priorityFilter);
+      list = list.filter((t) => t.priority === priorityFilter && t.is_finished === false);
     }
 
     // Category filter
@@ -373,7 +384,7 @@ export default function TaskSidebar({ userId }: Props) {
                   <p className="text-sm text-muted-foreground">No tasks for today yet.</p>
                 ) : (
                   <ul ref={listRef} className="space-y-2">
-                    {visibleTasks.map((t) => (
+                    {visibleTasks.filter((t)=>!t.is_finished).map((t) => (
                       <TaskItem key={t.id} task={t as any} />
                     ))}
                   </ul>
@@ -400,7 +411,10 @@ export default function TaskSidebar({ userId }: Props) {
                 ✕
               </Button>
             </div>
-            <NewTaskForm />
+            <NewTaskForm onCreated={(task) => {
+              setTasks((prev) => [...prev, task]);
+              setShowNewTaskModal(false);
+            }} />
           </div>
         </div>
       )}

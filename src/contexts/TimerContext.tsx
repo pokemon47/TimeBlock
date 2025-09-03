@@ -4,9 +4,11 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
 import { startLog } from "@/db/startLog";
 import { stopLog } from "@/db/stopLog";
+import { finishTask } from "@/db/finishTask";
 import { createBreakLog } from "@/db/createBreakLog";
 import { Button } from "@/components/ui/button";
 import { playAlert, startRepeatAlert, stopRepeatAlert } from "@/lib/playAlert";
+import { usePathname, useRouter } from "next/navigation";
 
 type TimerState = {
   activeTaskId: string | null;
@@ -29,7 +31,7 @@ interface TimerContextValue extends TimerState {
    * Stop the current log.
    * @param overtimeMinutes Minutes beyond the task estimate to record (default 0)
    */
-  stop: (overtimeMinutes?: number) => Promise<void>;
+  stop: (overtimeMinutes?: number, finish?: boolean) => Promise<void>;
   updateBreakSettings: (vals: { break_every_mins?: number; break_duration_mins?: number; long_pause_mins?: number }) => void;
   breakDurationMs: number;
   startBreak: (durationMs: number) => void;
@@ -45,8 +47,8 @@ const STORAGE_KEY = "timeblock-timer-state";
 // Default 10 minutes; will be overridden by user setting
 const DEFAULT_LONG_PAUSE_MS = 10 * 60 * 1000;
 
-function loadState(): TimerState {
-  if (typeof window === "undefined") return {
+function loadState(serverRender: boolean = false): TimerState {
+  const defaultState = {
     activeTaskId: null,
     currentLogId: null,
     startedAt: null,
@@ -58,6 +60,9 @@ function loadState(): TimerState {
     isOnBreak: false,
     breakStartedAt: null,
   };
+
+  if (serverRender || typeof window === "undefined") return defaultState;
+  
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) throw new Error();
@@ -75,23 +80,21 @@ function loadState(): TimerState {
       breakStartedAt: parsed.breakStartedAt ?? null,
     } as TimerState;
   } catch {
-    return {
-      activeTaskId: null,
-      currentLogId: null,
-      startedAt: null,
-      elapsedMs: 0,
-      isPaused: true,
-      pauseStartedAt: null,
-      pausedMs: 0,
-      workMsSinceBreak: 0,
-      isOnBreak: false,
-      breakStartedAt: null,
-    };
+    return defaultState;
   }
 }
 
 export function TimerProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<TimerState>(() => loadState());
+  const [isMounted, setIsMounted] = useState(false);
+  const [state, setState] = useState<TimerState>(loadState(true)); // Initial render with server-safe state
+
+  // On mount, load the full state from localStorage
+  useEffect(() => {
+    setState(loadState(false));
+    setIsMounted(true);
+  }, []);
+  const pathname = usePathname();
+  const router = useRouter();
   const [showPrompt, setShowPrompt] = useState(false);
   const longPauseTimerRef = useRef<number | null>(null);
   const [longPauseMs, setLongPauseMs] = useState<number>(DEFAULT_LONG_PAUSE_MS);
@@ -250,6 +253,13 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state]);
 
+  // Redirect logic: if a task starts while viewing settings, go to dashboard
+  useEffect(() => {
+    if (state.activeTaskId && pathname.startsWith("/settings")) {
+      router.push("/dashboard");
+    }
+  }, [state.activeTaskId, pathname, router]);
+
   /* -------- Break suggestion effect -------- */
   useEffect(() => {
     if (breakEveryMs === 0) return; // disabled
@@ -352,6 +362,7 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
       newLogId = await startLog(userId, taskId);
     } catch {}
 
+    const endedTaskId = state.activeTaskId;
     setState({
       activeTaskId: taskId,
       currentLogId: newLogId,
@@ -371,6 +382,16 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
       longPauseTimerRef.current = null;
     }
     setShowPrompt(false);
+
+    // if (endedTaskId) {
+    //   finishTask(endedTaskId, userId).catch((err) => {
+    //     // Surface error so we can debug RLS issues
+    //     console.error("finishTask error", err);
+    //   });
+    //   if (typeof window !== "undefined") {
+    //     window.dispatchEvent(new CustomEvent("tb_task_ended", { detail: { taskId: endedTaskId } }));
+    //   }
+    // }
   }
 
   function pause() {
@@ -404,7 +425,7 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
     setShowPrompt(false);
   }
 
-  async function stop(overtimeSeconds: number = 0) {
+  async function stop(overtimeSeconds: number = 0, finish: boolean = false) {
     // If stopping while on a break, finalise that break log first
     if (state.isOnBreak && userId && state.breakStartedAt) {
       const now = Date.now();
@@ -418,6 +439,8 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
         );
       } catch {}
     }
+
+    const endedTaskIdForStop = state.activeTaskId;
 
     if (state.currentLogId) {
       const now = Date.now();
@@ -433,6 +456,14 @@ export function TimerProvider({ children }: { children: React.ReactNode }) {
       try {
         await stopLog(state.currentLogId, seconds, totalPausedMs, overtimeSeconds);
       } catch {}
+    }
+
+    // Mark task finished only if requested
+    if (finish && endedTaskIdForStop) {
+      finishTask(endedTaskIdForStop, userId ?? undefined).catch((err) => console.error("finishTask error", err));
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("tb_task_ended", { detail: { taskId: endedTaskIdForStop } }));
+      }
     }
 
     setState({

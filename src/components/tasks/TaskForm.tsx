@@ -40,7 +40,7 @@ export default function TaskForm({ initial, onSubmit, onCancel, submitLabel = "S
   );
   const [difficulty, setDifficulty] = useState(initial?.difficulty ?? 5);
   const [categoryId, setCategoryId] = useState<string | null>(initial?.categoryId ?? null);
-  const [subCreating, setSubCreating] = useState(false);
+  // Sub-category creation removed; no longer tracking creation state.
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,9 +95,7 @@ export default function TaskForm({ initial, onSubmit, onCancel, submitLabel = "S
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && subCreating) {
-              e.preventDefault();
-            }
+            // No special handling needed now that sub-category creation is gone.
           }}
           placeholder="Write blog post"
           required
@@ -173,11 +171,7 @@ export default function TaskForm({ initial, onSubmit, onCancel, submitLabel = "S
       </div>
 
       {/* Category */}
-      <CategoryPicker
-        value={categoryId}
-        onChange={setCategoryId}
-        onCreatingChange={setSubCreating}
-      />
+      <CategoryPicker value={categoryId} onChange={setCategoryId} />
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
