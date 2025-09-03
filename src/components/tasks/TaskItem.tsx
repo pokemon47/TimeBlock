@@ -9,6 +9,8 @@ import type { TaskRow } from "@/db/listTasksToday";
 import { useRouter } from "next/navigation";
 import { useTimer } from "@/contexts/TimerContext";
 import { createPortal } from "react-dom";
+import { playAlert } from "@/lib/playAlert";
+import { startRepeatAlert, stopRepeatAlert } from "@/lib/playAlert";
 
 interface Props {
   task: TaskRow;
@@ -133,6 +135,7 @@ export default function TaskItem({ task }: Props) {
         countdown = "-" + formatHMS(remainingMs);
         if (!overtimeAck && !showOverPrompt && !timer.isPaused) {
           setShowOverPrompt(true);
+          playAlert();
         }
       }
     } else {
@@ -231,6 +234,14 @@ export default function TaskItem({ task }: Props) {
     if (m) parts.push(`${m}m`);
     return parts.join(" ");
   }
+
+  // repeat alert effect
+  useEffect(() => {
+    const repeat = typeof window !== "undefined" && localStorage.getItem("tb_repeat") === "1";
+    const secs = typeof window !== "undefined" ? parseInt(localStorage.getItem("tb_repeat_secs") || "5") : 5;
+    if (showOverPrompt && repeat) startRepeatAlert(secs);
+    if (!showOverPrompt) stopRepeatAlert();
+  }, [showOverPrompt]);
 
   return (
     <li className="rounded border p-3 flex items-center justify-between gap-4">
